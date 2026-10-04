@@ -1,0 +1,31 @@
+PisoWatcher - Avisos de pisos libres en alquilazaragoza.es por Telegram
+=====================================================================
+
+No necesita instalar nada. Copia esta carpeta donde quieras (otro PC, un USB...).
+Solo funciona en Windows de 64 bits.
+
+1) CREAR EL BOT (una sola vez)
+   - En Telegram abre @BotFather y escribe /newbot
+   - Ponle un nombre y un usuario que acabe en "bot"
+   - Copia el token que te da en appsettings.json -> "BotToken"
+
+2) AÑADIR A LAS PERSONAS QUE RECIBEN AVISOS
+   - Cada persona abre el bot en Telegram, pulsa INICIAR y escribe "hola"
+   - Abre una consola en esta carpeta y ejecuta:   PisoWatcher.exe --chatids
+   - Copia los ChatId que salen en appsettings.json -> "ChatIds", por ejemplo:
+         "ChatIds": [ "123456789", "987654321" ]
+   - Para un grupo: añade el bot al grupo, escribe algo en el grupo y repite
+     --chatids (el ChatId de un grupo empieza por "-").
+
+3) ARRANCAR
+   - Doble clic en PisoWatcher.exe. Llegará un mensaje "Vigilancia iniciada"
+     a todos los chats. Mientras la ventana esté abierta, revisa la web cada
+     "IntervalMinutes" minutos y avisa de cada piso nuevo que no esté
+     reservado ni alquilado.
+   - Para cerrarlo: cierra la ventana o pulsa Ctrl+C.
+
+OPCIONAL - QUE ARRANQUE SOLO CON WINDOWS
+   Win+R -> shell:startup -> crea ahí un acceso directo a PisoWatcher.exe
+
+NOTA: los pisos ya avisados se recuerdan solo mientras el programa está
+abierto; al reiniciarlo volverá a avisar de los que estén libres en ese momento.

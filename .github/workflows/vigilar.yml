@@ -1,0 +1,44 @@
+name: Vigilar pisos
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"   # cada 5 min (GitHub puede retrasarlo unos minutos en horas punta)
+  workflow_dispatch:         # permite lanzarlo a mano desde la pestaña Actions
+
+# Nunca dos ejecuciones a la vez: comparten el archivo de estado.
+concurrency:
+  group: vigilar-pisos
+  cancel-in-progress: false
+
+permissions:
+  contents: write            # para guardar state/state.json en el repositorio
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Revisar la web y avisar por Telegram
+        env:
+          Telegram__BotToken: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          Telegram__ChatIds__0: ${{ secrets.TELEGRAM_CHAT_IDS }}
+          Telegram__NotifyOnStartup: "false"
+          Monitor__RunOnce: "true"
+          Monitor__StateFile: ${{ github.workspace }}/state/state.json
+        run: dotnet run --project PisoWatcher.csproj --no-launch-profile
+
+      # Guarda qué pisos se han avisado y cuándo fue el último informe.
+      # Los informes diarios generan commits, lo que además evita que GitHub
+      # desactive el horario por inactividad (60 días).
+      - name: Guardar estado
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state
+          git diff --cached --quiet || (git commit -m "Actualizar estado" && git push)
