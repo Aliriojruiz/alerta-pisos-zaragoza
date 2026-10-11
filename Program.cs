@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Security;
 using Microsoft.Extensions.Options;
 using PisoWatcher;
 using PisoWatcher.Options;
@@ -38,9 +39,19 @@ builder.Services.AddHttpClient<IHtmlFetcher, HttpHtmlFetcher>(client =>
         client.DefaultRequestHeaders.AcceptLanguage.ParseAdd("es-ES,es;q=0.9");
         client.DefaultRequestHeaders.Accept.ParseAdd("text/html,application/xhtml+xml");
     })
-    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+    .ConfigurePrimaryHttpMessageHandler(sp =>
     {
-        AutomaticDecompression = DecompressionMethods.All
+        var allowExpired = sp.GetRequiredService<IOptions<MonitorOptions>>().Value.AllowExpiredCertificate;
+        var logger = sp.GetRequiredService<ILoggerFactory>().CreateLogger(nameof(CertificatePolicy));
+        return new SocketsHttpHandler
+        {
+            AutomaticDecompression = DecompressionMethods.All,
+            SslOptions = new SslClientAuthenticationOptions
+            {
+                RemoteCertificateValidationCallback = (_, _, chain, errors) =>
+                    CertificatePolicy.Validate(chain, errors, allowExpired, logger)
+            }
+        };
     });
 
 builder.Services.AddHttpClient("telegram");

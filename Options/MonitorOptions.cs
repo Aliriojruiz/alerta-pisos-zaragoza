@@ -22,6 +22,9 @@ public sealed class MonitorOptions
     /// <summary>Zona horaria de StatusReportHours (IANA).</summary>
     public string TimeZone { get; set; } = "Europe/Madrid";
 
+    /// <summary>Acepta el certificado SSL del portal si su único fallo es estar caducado.</summary>
+    public bool AllowExpiredCertificate { get; set; } = true;
+
     /// <summary>XPath que selecciona cada tarjeta de inmueble.</summary>
     public string ListingXPath { get; set; } = "//article";
 
