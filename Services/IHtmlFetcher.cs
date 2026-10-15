@@ -2,8 +2,11 @@ namespace PisoWatcher.Services;
 
 public interface IHtmlFetcher
 {
-    Task<string> GetHtmlAsync(string url, CancellationToken ct);
+    /// <summary>Descarga una página. <see cref="FetchedPage.Url"/> es la URL final, tras redirecciones.</summary>
+    Task<FetchedPage> GetPageAsync(string url, CancellationToken ct);
 }
+
+public sealed record FetchedPage(string Html, Uri Url);
 
 internal static class HttpDefaults
 {

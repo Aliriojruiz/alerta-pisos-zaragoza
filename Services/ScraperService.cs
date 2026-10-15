@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using System.Text;
+using System.Text.RegularExpressions;
 using HtmlAgilityPack;
 using Microsoft.Extensions.Options;
 using PisoWatcher.Models;
@@ -8,17 +9,17 @@ using PisoWatcher.Options;
 
 namespace PisoWatcher.Services;
 
-public sealed class ScraperService(IHtmlFetcher fetcher, IOptions<MonitorOptions> options, ILogger<ScraperService> logger)
+public sealed partial class ScraperService(IHtmlFetcher fetcher, IOptions<MonitorOptions> options, ILogger<ScraperService> logger)
 {
     private readonly MonitorOptions _options = options.Value;
 
     /// <summary>Devuelve los inmuebles del portal que NO están marcados como reservados/alquilados.</summary>
     public async Task<ScanResult> GetAvailableListingsAsync(CancellationToken ct)
     {
-        var html = await fetcher.GetHtmlAsync(_options.PortalUrl, ct);
+        var page = await fetcher.GetPageAsync(_options.PortalUrl, ct);
 
         var doc = new HtmlDocument();
-        doc.LoadHtml(html);
+        doc.LoadHtml(page.Html);
 
         var cards = doc.DocumentNode.SelectNodes(_options.ListingXPath);
         if (cards is null || cards.Count == 0)
@@ -54,6 +55,71 @@ public sealed class ScraperService(IHtmlFetcher fetcher, IOptions<MonitorOptions
         // Una tarjeta puede repetir enlaces al mismo piso: deduplicamos por Id.
         return new ScanResult(cards.Count, available.DistinctBy(l => l.Id).ToList());
     }
+
+    /// <summary>
+    /// Lee la ficha del piso (dirección, características, contacto). La web solo enseña fichas con la
+    /// cookie de sesión del catálogo; si redirige al catálogo, se recarga este y se reintenta una vez.
+    /// </summary>
+    public async Task<ListingDetails?> GetDetailsAsync(Listing listing, CancellationToken ct)
+    {
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            var page = await fetcher.GetPageAsync(listing.Url, ct);
+            if (page.Url.AbsolutePath.TrimEnd('/') == new Uri(listing.Url).AbsolutePath.TrimEnd('/'))
+                return ParseDetails(page.Html, page.Url);
+
+            logger.LogDebug("La ficha {Url} redirigió a {Final}; se renueva la sesión", listing.Url, page.Url);
+            await fetcher.GetPageAsync(_options.PortalUrl, ct);
+        }
+
+        logger.LogWarning("No se pudo abrir la ficha {Url} (la web redirige al catálogo)", listing.Url);
+        return null;
+    }
+
+    private static ListingDetails ParseDetails(string html, Uri pageUrl)
+    {
+        var doc = new HtmlDocument();
+        doc.LoadHtml(html);
+        var root = doc.DocumentNode;
+
+        // Cabecera: 1º calle y planta, 2º precio; aparte, una con los ingresos mínimos.
+        var headers = root.SelectNodes("//h4[contains(@class,'sub_benef')]")?.ToList() ?? [];
+        var incomeHeader = headers.FirstOrDefault(h => h.InnerText.Contains("Ingresos", StringComparison.OrdinalIgnoreCase));
+        if (incomeHeader is not null)
+            headers.Remove(incomeHeader);
+        var address = CleanText(headers.ElementAtOrDefault(0)?.InnerText);
+        var price = CleanText(headers.ElementAtOrDefault(1)?.InnerText);
+        var minIncome = incomeHeader?.SelectNodes("./a") is { Count: >= 2 } incomeParts
+            ? CleanText(string.Join(' ', incomeParts.Skip(1).Select(a => a.InnerText)))
+            : null;
+
+        // Características: cada bloque tiene <p> etiqueta + <p> valor.
+        var features = new List<KeyValuePair<string, string>>();
+        foreach (var block in root.SelectNodes("//div[contains(@class,'col-10')][count(p)>=2]") ?? Enumerable.Empty<HtmlNode>())
+        {
+            var label = CleanText(block.SelectSingleNode("./p[1]")?.InnerText);
+            var value = CleanText(block.SelectSingleNode("./p[2]")?.InnerText);
+            if (label is not null && value is not null && features.All(f => f.Key != label))
+                features.Add(new(label, SquareMeters().Replace(value, "m²")));
+        }
+
+        // Contacto del pie de página (Zaragoza Vivienda; la web no da un teléfono por piso).
+        var footerText = CleanText(root.InnerText) ?? "";
+        var phone = PhoneAfterLabel().Match(footerText) is { Success: true } m ? m.Groups[1].Value.Trim() : null;
+        var email = root.SelectSingleNode("//a[starts-with(@href,'mailto:')]")?.GetAttributeValue("href", "")["mailto:".Length..];
+
+        var planUrl = root.SelectSingleNode("//*[contains(@onclick,'descarga-plano')]") is not null
+            ? new Uri(pageUrl, pageUrl.AbsolutePath.TrimEnd('/') + "/descarga-plano").ToString()
+            : null;
+
+        return new ListingDetails(address, price, minIncome, features, phone, email, planUrl);
+    }
+
+    [GeneratedRegex(@"\bm\s?2\b")]
+    private static partial Regex SquareMeters();
+
+    [GeneratedRegex(@"Teléfono\s*([+\d][\d\s]{7,15}\d)")]
+    private static partial Regex PhoneAfterLabel();
 
     private Listing? ParseListing(HtmlNode card, Uri baseUri)
     {

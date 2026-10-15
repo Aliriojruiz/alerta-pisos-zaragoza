@@ -81,15 +81,34 @@ public sealed class Worker(
     private async Task NotifyNewListingsAsync(IReadOnlyList<Listing> listings, CancellationToken ct)
     {
         foreach (var listing in listings)
-        foreach (var chatId in notifier.ChatIds)
         {
-            // Se controla por chat para que, si el envío falla en uno, solo se reintente en ese.
-            if (notified.Contains(chatId, listing.Id))
+            var pendingChats = notifier.ChatIds.Where(chatId => !notified.Contains(chatId, listing.Id)).ToList();
+            if (pendingChats.Count == 0)
                 continue;
 
+            // La ficha se lee una vez por piso; si falla, se avisa igualmente con los datos del catálogo.
+            ListingDetails? details = null;
             try
             {
-                await notifier.SendListingAsync(chatId, listing, ct);
+                details = await scraper.GetDetailsAsync(listing, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogWarning(ex, "No se pudieron leer los detalles de {Url}; se envía el aviso básico", listing.Url);
+            }
+
+            await NotifyChatsAsync(listing, details, pendingChats, ct);
+        }
+    }
+
+    private async Task NotifyChatsAsync(Listing listing, ListingDetails? details, IEnumerable<string> chatIds, CancellationToken ct)
+    {
+        // Se controla por chat para que, si el envío falla en uno, solo se reintente en ese.
+        foreach (var chatId in chatIds)
+        {
+            try
+            {
+                await notifier.SendListingAsync(chatId, listing, details, ct);
                 // Solo se marca si el envío tuvo éxito; si falla, se reintenta en la siguiente vuelta.
                 notified.Add(chatId, listing.Id);
                 // Telegram limita la frecuencia de envío; un pequeño respiro evita errores 429.

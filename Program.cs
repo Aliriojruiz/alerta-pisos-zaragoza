@@ -24,11 +24,14 @@ builder.Services.AddOptions<MonitorOptions>()
     .ValidateOnStart();
 
 var listChats = args.Contains("--chatids", StringComparer.OrdinalIgnoreCase);
+// --ficha <url>: muestra en consola el aviso que se enviaría para ese piso (no envía nada).
+var previewUrl = args.SkipWhile(a => !a.Equals("--ficha", StringComparison.OrdinalIgnoreCase)).Skip(1).FirstOrDefault();
+var toolMode = listChats || previewUrl is not null;
 
 builder.Services.AddOptions<TelegramOptions>()
     .BindConfiguration(TelegramOptions.SectionName)
     .Validate(o => !string.IsNullOrWhiteSpace(o.BotToken) && !o.BotToken.StartsWith("PON_AQUI"), "Telegram:BotToken es obligatorio")
-    .Validate(o => listChats || o.ChatIds.Any(id => !string.IsNullOrWhiteSpace(id) && !id.StartsWith("PON_AQUI")),
+    .Validate(o => toolMode || o.ChatIds.Any(id => !string.IsNullOrWhiteSpace(id) && !id.StartsWith("PON_AQUI")),
         "Telegram:ChatIds debe tener al menos un chat (ejecuta con --chatids para verlos)")
     .ValidateOnStart();
 
@@ -66,7 +69,7 @@ builder.Services.AddSingleton<NotifiedStore>();
 builder.Services.AddSingleton<ScraperService>();
 builder.Services.AddSingleton<TelegramNotifier>();
 
-if (!listChats)
+if (!toolMode)
     builder.Services.AddHostedService<Worker>();
 
 var host = builder.Build();
@@ -74,6 +77,17 @@ var host = builder.Build();
 if (listChats)
 {
     await ChatIdLister.PrintAsync(host.Services.GetRequiredService<ITelegramBotClient>());
+    return;
+}
+
+if (previewUrl is not null)
+{
+    var scraper = host.Services.GetRequiredService<ScraperService>();
+    await scraper.GetAvailableListingsAsync(CancellationToken.None); // abre sesión en la web
+    var listing = new PisoWatcher.Models.Listing(previewUrl, previewUrl, previewUrl, null);
+    var details = await scraper.GetDetailsAsync(listing, CancellationToken.None);
+    Console.OutputEncoding = System.Text.Encoding.UTF8;
+    Console.WriteLine(TelegramNotifier.BuildListingMessage(listing, details));
     return;
 }
 
